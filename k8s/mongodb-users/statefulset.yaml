@@ -21,16 +21,6 @@ spec:
           volumeMounts:
             - name: mongo-users-data
               mountPath: /data/db
-          livenessProbe:
-            exec:
-              command: ["mongosh", "--eval", "db.adminCommand('ping')"]
-            initialDelaySeconds: 30
-            periodSeconds: 10
-          readinessProbe:
-            exec:
-              command: ["mongosh", "--eval", "db.adminCommand('ping')"]
-            initialDelaySeconds: 10
-            periodSeconds: 5
   volumeClaimTemplates:
     - metadata:
         name: mongo-users-data
