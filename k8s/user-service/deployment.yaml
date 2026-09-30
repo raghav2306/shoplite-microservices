@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: user-service
-          image: ecommerce-microservices-user-service:latest
+          image: user-service:v1
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 50051
@@ -23,13 +23,3 @@ spec:
                 name: user-service-config
             - secretRef:
                 name: user-service-secret
-          readinessProbe:
-            tcpSocket:
-              port: 50051
-            initialDelaySeconds: 10
-            periodSeconds: 5
-          livenessProbe:
-            tcpSocket:
-              port: 50051
-            initialDelaySeconds: 20
-            periodSeconds: 10
