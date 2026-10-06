@@ -25,8 +25,27 @@ function assertValidItem({ productId, quantity }) {
   }
 }
 
+function toResponse(product) {
+  return {
+    id: product._id.toString(),
+    name: product.name,
+    description: product.description,
+    price: product.price,
+    stock: product.stock,
+  };
+}
+
+function assertValidProduct({ name, price, stock }) {
+  if (!name?.trim()) throw grpcError(INVALID_ARGUMENT, "Name is required");
+  if (!(price >= 0)) throw grpcError(INVALID_ARGUMENT, "Price must be 0 or more");
+  if (!Number.isInteger(stock) || stock < 0) {
+    throw grpcError(INVALID_ARGUMENT, "Stock must be a whole number, 0 or more");
+  }
+}
+
 async function CreateProduct(call, callback) {
   try {
+    assertValidProduct(call.request);
     const { name, description, price, stock } = call.request;
     const product = await Product.create({ name, description, price, stock });
     callback(null, {
@@ -36,7 +55,40 @@ async function CreateProduct(call, callback) {
       stock: product.stock,
     });
   } catch (err) {
-    callback({ code: 13, message: err.message });
+    callback(toGrpcError(err));
+  }
+}
+
+async function UpdateProduct(call, callback) {
+  try {
+    const { productId, name, description, price, stock } = call.request;
+    if (!mongoose.isValidObjectId(productId)) {
+      return callback({ code: NOT_FOUND, message: "Product not found" });
+    }
+    assertValidProduct(call.request);
+    const product = await Product.findByIdAndUpdate(
+      productId,
+      { name, description, price, stock },
+      { new: true, runValidators: true }
+    );
+    if (!product) return callback({ code: NOT_FOUND, message: "Product not found" });
+    callback(null, toResponse(product));
+  } catch (err) {
+    callback(toGrpcError(err));
+  }
+}
+
+async function DeleteProduct(call, callback) {
+  try {
+    const { productId } = call.request;
+    if (!mongoose.isValidObjectId(productId)) {
+      return callback({ code: NOT_FOUND, message: "Product not found" });
+    }
+    const product = await Product.findByIdAndDelete(productId);
+    if (!product) return callback({ code: NOT_FOUND, message: "Product not found" });
+    callback(null, { success: true });
+  } catch (err) {
+    callback(toGrpcError(err));
   }
 }
 
@@ -161,6 +213,8 @@ async function ReleaseStock(call, callback) {
 
 module.exports = {
   CreateProduct,
+  UpdateProduct,
+  DeleteProduct,
   GetProduct,
   ListProducts,
   CheckStock,

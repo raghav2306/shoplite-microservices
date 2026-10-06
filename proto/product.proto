@@ -6,6 +6,8 @@ service ProductService {
   rpc CreateProduct (CreateProductRequest) returns (CreateProductResponse);
   rpc GetProduct (GetProductRequest) returns (GetProductResponse);
   rpc ListProducts (ListProductsRequest) returns (ListProductsResponse);
+  rpc UpdateProduct (UpdateProductRequest) returns (GetProductResponse);
+  rpc DeleteProduct (DeleteProductRequest) returns (DeleteProductResponse);
   rpc CheckStock (CheckStockRequest) returns (CheckStockResponse);
   rpc DecrementStock (DecrementStockRequest) returns (DecrementStockResponse);
   // Atomically reserves stock for every item (all or nothing) and returns current prices.
@@ -38,6 +40,22 @@ message GetProductResponse {
   string description = 3;
   double price = 4;
   int32 stock = 5;
+}
+
+message UpdateProductRequest {
+  string productId = 1;
+  string name = 2;
+  string description = 3;
+  double price = 4;
+  int32 stock = 5;
+}
+
+message DeleteProductRequest {
+  string productId = 1;
+}
+
+message DeleteProductResponse {
+  bool success = 1;
 }
 
 message ListProductsRequest {}

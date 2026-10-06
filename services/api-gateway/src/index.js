@@ -5,6 +5,7 @@ const morgan = require("morgan");
 const userRoutes = require("./routes/users");
 const productRoutes = require("./routes/products");
 const orderRoutes = require("./routes/orders");
+const adminRoutes = require("./routes/admin");
 const { healthClients } = require("./clients/grpcClients");
 
 const app = express();
@@ -15,6 +16,7 @@ app.use(morgan("dev"));
 app.use("/api/users", userRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/admin", adminRoutes);
 
 let shuttingDown = false;
 

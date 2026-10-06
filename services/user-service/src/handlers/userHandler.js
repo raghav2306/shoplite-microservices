@@ -63,7 +63,7 @@ async function GetUser(call, callback) {
     }
     const user = await User.findById(call.request.userId);
     if (!user) return callback({ code: 5, message: "User not found" });
-    callback(null, { id: user._id.toString(), name: user.name, email: user.email });
+    callback(null, { id: user._id.toString(), name: user.name, email: user.email, role: user.role });
   } catch (err) {
     callback({ code: 13, message: err.message });
   }

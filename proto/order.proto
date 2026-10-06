@@ -6,6 +6,8 @@ service OrderService {
   rpc CreateOrder (CreateOrderRequest) returns (CreateOrderResponse);
   rpc GetOrder (GetOrderRequest) returns (GetOrderResponse);
   rpc ListUserOrders (ListUserOrdersRequest) returns (ListUserOrdersResponse);
+  // Admin: all orders, optionally filtered by status
+  rpc ListAllOrders (ListAllOrdersRequest) returns (ListUserOrdersResponse);
   rpc CancelOrder (CancelOrderRequest) returns (CancelOrderResponse);
   rpc UpdateOrderStatus (UpdateOrderStatusRequest) returns (UpdateOrderStatusResponse);
 }
@@ -40,6 +42,7 @@ message GetOrderResponse {
   string status = 4;
   double totalAmount = 5;
   string createdAt = 6;
+  string email = 7;
 }
 
 message ListUserOrdersRequest {
@@ -48,6 +51,10 @@ message ListUserOrdersRequest {
 
 message ListUserOrdersResponse {
   repeated GetOrderResponse orders = 1;
+}
+
+message ListAllOrdersRequest {
+  string status = 1; // empty = all
 }
 
 message CancelOrderRequest {

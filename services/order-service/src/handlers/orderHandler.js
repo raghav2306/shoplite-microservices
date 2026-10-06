@@ -11,6 +11,14 @@ const UNAVAILABLE = 14;
 
 const CANCELLABLE_STATUSES = ["pending", "confirmed"];
 
+// Allowed status changes: target status -> statuses it can be reached from
+const ALLOWED_FROM = {
+  confirmed: ["pending"],
+  shipped: ["confirmed"],
+  delivered: ["shipped"],
+  cancelled: CANCELLABLE_STATUSES,
+};
+
 function toResponse(order) {
   return {
     orderId: order._id.toString(),
@@ -19,6 +27,7 @@ function toResponse(order) {
     status: order.status,
     totalAmount: order.totalAmount,
     createdAt: order.createdAt.toISOString(),
+    email: order.email || "",
   };
 }
 
@@ -99,7 +108,17 @@ async function GetOrder(call, callback) {
 
 async function ListUserOrders(call, callback) {
   try {
-    const orders = await Order.find({ userId: call.request.userId });
+    const orders = await Order.find({ userId: call.request.userId }).sort({ createdAt: -1 });
+    callback(null, { orders: orders.map(toResponse) });
+  } catch (err) {
+    callback({ code: INTERNAL, message: err.message });
+  }
+}
+
+async function ListAllOrders(call, callback) {
+  try {
+    const { status } = call.request;
+    const orders = await Order.find(status ? { status } : {}).sort({ createdAt: -1 });
     callback(null, { orders: orders.map(toResponse) });
   } catch (err) {
     callback({ code: INTERNAL, message: err.message });
@@ -155,22 +174,55 @@ async function UpdateOrderStatus(call, callback) {
     if (!mongoose.isValidObjectId(orderId)) {
       return callback({ code: NOT_FOUND, message: "Order not found" });
     }
-    const order = await Order.findByIdAndUpdate(orderId, { status }, { new: true, runValidators: true });
-    if (!order) return callback({ code: NOT_FOUND, message: "Order not found" });
+    const allowedFrom = ALLOWED_FROM[status];
+    if (!allowedFrom) {
+      return callback({ code: INVALID_ARGUMENT, message: `Invalid status "${status}"` });
+    }
 
-    if (status === "shipped") {
-      publishEvent("order.shipped", {
-        orderId: order._id.toString(),
-        userId: order.userId,
-        email: order.email,
-        items: order.items,
+    // Atomic transition so concurrent updates can't skip steps or double-release stock.
+    const previous = await Order.findOneAndUpdate(
+      { _id: orderId, status: { $in: allowedFrom } },
+      { status }
+    );
+    if (!previous) {
+      const order = await Order.findById(orderId);
+      if (!order) return callback({ code: NOT_FOUND, message: "Order not found" });
+      return callback({
+        code: FAILED_PRECONDITION,
+        message: `Cannot change status from ${order.status} to ${status}`,
       });
     }
 
-    callback(null, { success: true, status: order.status });
+    const stockItems = previous.items.map(({ productId, quantity }) => ({ productId, quantity }));
+    if (status === "cancelled") {
+      try {
+        await releaseStock(stockItems);
+      } catch (err) {
+        await Order.updateOne({ _id: orderId, status }, { status: previous.status });
+        return callback(stockErrorToGrpc(err));
+      }
+    }
+
+    if (["cancelled", "shipped"].includes(status)) {
+      publishEvent(`order.${status}`, {
+        orderId,
+        userId: previous.userId,
+        email: previous.email,
+        items: stockItems,
+      });
+    }
+
+    callback(null, { success: true, status });
   } catch (err) {
     callback({ code: INTERNAL, message: err.message });
   }
 }
 
-module.exports = { CreateOrder, GetOrder, ListUserOrders, CancelOrder, UpdateOrderStatus };
+module.exports = {
+  CreateOrder,
+  GetOrder,
+  ListUserOrders,
+  ListAllOrders,
+  CancelOrder,
+  UpdateOrderStatus,
+};

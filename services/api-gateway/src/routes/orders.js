@@ -1,6 +1,7 @@
 const express = require("express");
 const { orderClient } = require("../clients/grpcClients");
 const { authenticate } = require("../middleware/auth");
+const { sendGrpcError } = require("../utils/grpcError");
 
 const router = express.Router();
 
@@ -28,10 +29,7 @@ router.post("/", authenticate, (req, res) => {
       items: items.map(({ productId, quantity }) => ({ productId, quantity })),
     },
     (err, response) => {
-      if (err) {
-        const status = err.code === 14 ? 503 : 400; // UNAVAILABLE -> 503
-        return res.status(status).json({ error: err.details || err.message });
-      }
+      if (err) return sendGrpcError(res, err);
       res.status(201).json(response);
     }
   );
@@ -39,14 +37,14 @@ router.post("/", authenticate, (req, res) => {
 
 router.get("/", authenticate, (req, res) => {
   orderClient.ListUserOrders({ userId: req.user.userId }, (err, response) => {
-    if (err) return res.status(500).json({ error: err.message });
+    if (err) return sendGrpcError(res, err);
     res.json(response.orders);
   });
 });
 
 router.get("/:id", authenticate, (req, res) => {
   orderClient.GetOrder({ orderId: req.params.id, userId: req.user.userId }, (err, response) => {
-    if (err) return res.status(404).json({ error: err.message });
+    if (err) return sendGrpcError(res, err);
     res.json(response);
   });
 });
@@ -55,7 +53,7 @@ router.delete("/:id", authenticate, (req, res) => {
   orderClient.CancelOrder(
     { orderId: req.params.id, userId: req.user.userId },
     (err, response) => {
-      if (err) return res.status(400).json({ error: err.message });
+      if (err) return sendGrpcError(res, err);
       res.json(response);
     }
   );

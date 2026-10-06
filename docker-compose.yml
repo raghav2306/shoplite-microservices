@@ -136,6 +136,32 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Customer-facing web app: http://localhost:8080
+  storefront:
+    build:
+      context: frontends/storefront
+    ports:
+      - "8080:80"
+    environment:
+      API_GATEWAY_URL: http://api-gateway:3000
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Admin web app: http://localhost:8081
+  admin:
+    build:
+      context: frontends/admin
+    ports:
+      - "8081:80"
+    environment:
+      API_GATEWAY_URL: http://api-gateway:3000
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   mongo_users:
   mongo_products:
