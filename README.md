@@ -7,7 +7,7 @@ database.
 
 | | |
 |---|---|
-| **Repository** | https://github.com/raghav2306/ecommerce-microservices |
+| **Repository** | https://github.com/raghav2306/shoplite-microservices |
 | **Status** | Application complete; Kubernetes manifests partially complete (see [Handover](docs/HANDOVER.md)) |
 | **Runtime** | Node.js (services), React + Vite on nginx (frontends), MongoDB 6, RabbitMQ 3.13 |
 | **Target platform** | AWS EKS (us-east-1), images in ECR |
