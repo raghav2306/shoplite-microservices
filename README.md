@@ -21,7 +21,8 @@ database.
 | [docs/SERVICES.md](docs/SERVICES.md) | DevOps | Per-service catalog: ports, health checks, configuration, dependencies, scaling |
 | [docs/API.md](docs/API.md) | DevOps, QA | Public HTTP API, for smoke tests and monitoring |
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | On-call | Deploy, verify, roll back, troubleshoot, routine operations |
-| [k8s/README.md](k8s/README.md) | DevOps | EKS prerequisites and step-by-step deployment |
+| [docs/EKS-DEPLOYMENT.md](docs/EKS-DEPLOYMENT.md) | DevOps | **Step-by-step EKS deployment**: cluster, add-ons, images, secrets, deploy, verify, teardown |
+| [k8s/README.md](k8s/README.md) | DevOps | Manifest layout and quick deploy commands |
 
 ## Components
 

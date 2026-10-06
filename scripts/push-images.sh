@@ -4,8 +4,9 @@
 set -euo pipefail
 
 TAG="${1:-v1}"
-ACCOUNT=573802369594
-REGION=us-east-1
+# Override with AWS_ACCOUNT_ID / AWS_REGION; defaults to the logged-in account and us-east-1
+ACCOUNT="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}"
+REGION="${AWS_REGION:-us-east-1}"
 REGISTRY="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
 PLATFORM=linux/amd64
 

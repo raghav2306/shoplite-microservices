@@ -21,9 +21,9 @@ alias k='kubectl -n ecommerce'
 
 ## First-time deployment
 
-Follow [k8s/README.md](../k8s/README.md). It covers cluster prerequisites
-(EBS CSI driver, AWS Load Balancer Controller, node size), pushing images,
-secrets, and `kubectl apply -R -f k8s/`.
+Follow [EKS-DEPLOYMENT.md](EKS-DEPLOYMENT.md). It covers the cluster, the
+EBS CSI driver, the AWS Load Balancer Controller, images, secrets, deployment,
+verification and teardown.
 
 ## Release a new version
 
@@ -77,7 +77,7 @@ reintroduce the bad version.
 | `ImagePullBackOff` | Image or tag not in ECR, or node role lacks ECR read | `aws ecr describe-images --repository-name dev/<service>`; re-run `push-images.sh` |
 | `CrashLoopBackOff`, log says `exec format error` | arm64 image on amd64 nodes | Rebuild with `scripts/push-images.sh` (forces `linux/amd64`) |
 | `CreateContainerConfigError` | Secret missing | `k get secrets`; create it from `k8s/<name>/secret.yaml.example`, then apply |
-| PVC `Pending`, Mongo or RabbitMQ pod `Pending` | EBS CSI driver add-on missing, or its IAM role missing | `k describe pvc <name>`; install the add-on ([k8s/README](../k8s/README.md)) |
+| PVC `Pending`, Mongo or RabbitMQ pod `Pending` | EBS CSI driver add-on missing, or its IAM role missing | `k describe pvc <name>`; install the add-on ([EKS-DEPLOYMENT step 3](EKS-DEPLOYMENT.md#3-install-the-ebs-csi-driver)) |
 | App pods `Pending`, `Too many pods` | Node pod limit reached (t3.small allows 11) | Use t3.medium or larger, or add nodes |
 | user- or product-service restarts once at cold start | MongoDB not ready yet; the service exits 1 by design | None, if it stabilises. If it keeps restarting, check Mongo |
 | Service logs `Authentication failed` against Mongo | Password in `secret.yaml` changed after the volume was first created | Mongo keeps its original password. Change it with [Rotate MongoDB password](#rotate-the-mongodb-password), or delete the PVC (**deletes data**) |
