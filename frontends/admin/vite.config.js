@@ -1,8 +1,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// In dev, /api is proxied to the gateway; in Docker, nginx does the same.
+// The admin app lives under /admin/ so it can share one load balancer with the
+// storefront (which owns /). API calls go to /api, proxied to the gateway in dev.
 export default defineConfig({
+  base: "/admin/",
   plugins: [react()],
   server: {
     port: 5174,

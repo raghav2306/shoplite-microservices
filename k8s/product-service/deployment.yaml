@@ -1,38 +1,68 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: product-service-deployment
-  labels:
-    app: product-service
+  name: product-service
+  namespace: ecommerce
 spec:
   replicas: 2
   selector:
     matchLabels:
       app: product-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0 # keep full capacity during rollouts
+      maxSurge: 1
   template:
     metadata:
       labels:
         app: product-service
     spec:
       containers:
-      - name: product-service
-        image: product-service:v1
-        ports:
-        - containerPort: 50052
-        startupProbe:
-          grpc:
-            port: 50052
-            service: liveness
-          periodSeconds: 5
-          failureThreshold: 24  # up to 2 min to connect to Mongo on boot
-        livenessProbe:
-          grpc:
-            port: 50052
-            service: liveness
-          periodSeconds: 10
-          failureThreshold: 3
-        readinessProbe:
-          grpc:
-            port: 50052  # "" service = all dependencies (Mongo) up
-          periodSeconds: 5
-          failureThreshold: 2
+        - name: product-service
+          # Built for linux/amd64 and pushed by scripts/push-images.sh
+          image: 573802369594.dkr.ecr.us-east-1.amazonaws.com/dev/product-service:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: grpc
+              containerPort: 50052
+          envFrom:
+            - configMapRef:
+                name: product-service-config
+          env:
+            - name: MONGO_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-products-secret
+                  key: MONGO_INITDB_ROOT_USERNAME
+            - name: MONGO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-products-secret
+                  key: MONGO_INITDB_ROOT_PASSWORD
+            # $(VAR) is expanded by Kubernetes from the vars defined above
+            - name: MONGO_URI
+              value: mongodb://$(MONGO_USER):$(MONGO_PASSWORD)@mongodb-products-0.mongodb-products:27017/products?authSource=admin
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              memory: 256Mi
+          startupProbe:
+            grpc:
+              port: 50052
+              service: liveness
+            periodSeconds: 5
+            failureThreshold: 24 # up to 2 min to connect to Mongo on boot
+          livenessProbe:
+            grpc:
+              port: 50052
+              service: liveness
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            grpc:
+              port: 50052 # "" service = all dependencies (Mongo) up
+            periodSeconds: 5
+            failureThreshold: 2

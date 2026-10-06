@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: ecommerce
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0 # keep full capacity during rollouts
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+        - name: api-gateway
+          # Built for linux/amd64 and pushed by scripts/push-images.sh
+          image: 573802369594.dkr.ecr.us-east-1.amazonaws.com/dev/api-gateway:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: api-gateway-config
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              memory: 256Mi
+          # Both probes use /health (process is up), not /ready (all downstream
+          # services up). Gating readiness on downstreams would pull every gateway
+          # pod out of the Service when any one backend is down, e.g. order-service
+          # today, taking the whole API offline instead of just /api/orders.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3

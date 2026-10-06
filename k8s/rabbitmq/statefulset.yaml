@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+  namespace: ecommerce
+spec:
+  serviceName: rabbitmq-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:3.13-management-alpine
+          ports:
+            - name: amqp
+              containerPort: 5672
+            - name: management
+              containerPort: 15672
+          # Default user is created on first start only (when the volume is empty)
+          envFrom:
+            - secretRef:
+                name: rabbitmq-secret
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              # RabbitMQ reads this limit and blocks publishers at 40% of it
+              memory: 1Gi
+          readinessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "-q", "ping"]
+            initialDelaySeconds: 60 # Erlang VM boot is slow
+            periodSeconds: 30
+            timeoutSeconds: 15
+            failureThreshold: 3
+          volumeMounts:
+            # Node name is rabbit@rabbitmq-0, stable across restarts, so the data stays valid
+            - name: data
+              mountPath: /var/lib/rabbitmq
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: ebs-gp3 # defined in 00-storageclass.yaml
+        resources:
+          requests:
+            storage: 1Gi

@@ -149,7 +149,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Admin web app: http://localhost:8081
+  # Admin web app: http://localhost:8081/admin/ (/ redirects there)
   admin:
     build:
       context: frontends/admin

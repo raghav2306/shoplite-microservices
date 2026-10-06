@@ -10,6 +10,8 @@ export async function api(path, { method = "GET", body } = {}) {
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
+  // Absolute /api (not /admin/api): in Kubernetes the ALB routes /api straight
+  // to the gateway; locally, nginx or the Vite dev proxy forwards it.
   const res = await fetch(`/api${path}`, {
     method,
     headers,

@@ -1,3 +1,7 @@
+# Resolve the gateway per request (not once at startup), so nginx still starts
+# when the gateway isn't up yet. NGINX_LOCAL_RESOLVERS comes from /etc/resolv.conf.
+resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
+
 server {
   listen 80;
   root /usr/share/nginx/html;
@@ -8,9 +12,11 @@ server {
     return 200 '{"status":"ok"}';
   }
 
-  # Same-origin API calls, so no CORS needed
+  # Local/docker-compose only: in Kubernetes the ALB routes /api straight to the
+  # gateway, so these requests never reach this container.
   location /api/ {
-    proxy_pass ${API_GATEWAY_URL};
+    set $api_upstream ${API_GATEWAY_URL};
+    proxy_pass $api_upstream;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;

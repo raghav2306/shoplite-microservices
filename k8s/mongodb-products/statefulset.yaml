@@ -1,18 +1,18 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: mongodb-users
+  name: mongodb-products
   namespace: ecommerce
 spec:
-  serviceName: mongodb-users
+  serviceName: mongodb-products
   replicas: 1
   selector:
     matchLabels:
-      app: mongodb-users
+      app: mongodb-products
   template:
     metadata:
       labels:
-        app: mongodb-users
+        app: mongodb-products
     spec:
       containers:
         - name: mongodb
@@ -23,7 +23,7 @@ spec:
           # Root user is created on first start only (when the volume is empty)
           envFrom:
             - secretRef:
-                name: mongodb-users-secret
+                name: mongodb-products-secret
           resources:
             requests:
               cpu: 100m
