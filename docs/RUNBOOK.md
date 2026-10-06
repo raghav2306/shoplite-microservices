@@ -23,9 +23,9 @@ alias k="kubectl -n $ENV"
 
 ## First-time deployment
 
-Follow [k8s/README.md](../k8s/README.md). It covers cluster prerequisites
-(EBS CSI driver, AWS Load Balancer Controller, node size), pushing images,
-per-environment secrets, and `kubectl apply -k k8s/overlays/<env>`.
+Follow [EKS-DEPLOYMENT.md](EKS-DEPLOYMENT.md). It covers the cluster, the
+EBS CSI driver, the AWS Load Balancer Controller, images, per-environment
+secrets, `kubectl apply -k k8s/overlays/<env>`, verification and teardown.
 
 ## Release a new version
 
@@ -91,7 +91,7 @@ the next `kubectl apply -k` doesn't reintroduce the bad version.
 | `ImagePullBackOff` | Image or tag not in ECR, or node role lacks ECR read | `aws ecr describe-images --repository-name ecommerce/<service>`; re-run `push-images.sh <tag>` |
 | `CrashLoopBackOff`, log says `exec format error` | arm64 image on amd64 nodes | Rebuild with `scripts/push-images.sh` (forces `linux/amd64`) |
 | `kubectl apply -k` fails: `secrets/<name>.env: no such file` | Secrets not created for this environment | Copy `k8s/secrets.example/*.env` to `k8s/overlays/<env>/secrets/` and set values |
-| PVC `Pending`, Mongo or RabbitMQ pod `Pending` | EBS CSI driver add-on missing, or its IAM role missing | `k describe pvc <name>`; install the add-on ([k8s/README](../k8s/README.md)) |
+| PVC `Pending`, Mongo or RabbitMQ pod `Pending` | EBS CSI driver add-on missing, or its IAM role missing | `k describe pvc <name>`; install the add-on ([EKS-DEPLOYMENT step 3](EKS-DEPLOYMENT.md#3-install-the-ebs-csi-driver-and-storageclass)) |
 | App pods `Pending`, `Too many pods` or `Insufficient memory` | Node capacity: all 3 environments share the cluster (~34 app pods) | Add nodes, or use larger instances (3 × t3.large minimum) |
 | user- or product-service restarts once at cold start | MongoDB not ready yet; the service exits 1 by design | None, if it stabilises. If it keeps restarting, check Mongo |
 | Service logs `Authentication failed` against Mongo | Password in `secrets/*.env` changed after the volume was first created | Mongo keeps its original password. Change it with [Rotate MongoDB password](#rotate-the-mongodb-password), or delete the PVC (**deletes data**) |
