@@ -3,4 +3,4 @@ node_modules
 *.log
 .DS_Store
 dist
-k8s/**/secret.yaml
+k8s/overlays/*/secrets/

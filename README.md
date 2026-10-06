@@ -10,7 +10,7 @@ database.
 | **Repository** | https://github.com/raghav2306/ecommerce-microservices |
 | **Status** | Application complete; Kubernetes manifests partially complete (see [Handover](docs/HANDOVER.md)) |
 | **Runtime** | Node.js (services), React + Vite on nginx (frontends), MongoDB 6, RabbitMQ 3.13 |
-| **Target platform** | AWS EKS (us-east-1), images in ECR |
+| **Target platform** | AWS EKS (us-east-1): environments `dev`, `staging`, `prod` as namespaces; images in ECR (`ecommerce/<service>`) |
 
 ## Documentation
 
@@ -21,7 +21,7 @@ database.
 | [docs/SERVICES.md](docs/SERVICES.md) | DevOps | Per-service catalog: ports, health checks, configuration, dependencies, scaling |
 | [docs/API.md](docs/API.md) | DevOps, QA | Public HTTP API, for smoke tests and monitoring |
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | On-call | Deploy, verify, roll back, troubleshoot, routine operations |
-| [k8s/README.md](k8s/README.md) | DevOps | EKS prerequisites and step-by-step deployment |
+| [k8s/README.md](k8s/README.md) | DevOps | Kustomize layout, EKS prerequisites, per-environment deployment and releases |
 
 ## Components
 
@@ -80,7 +80,7 @@ scripts/smoke-test.sh http://localhost:8080 http://localhost:8081/admin/
 │   ├── storefront/
 │   └── admin/
 ├── proto/                 gRPC contracts shared by all services
-├── k8s/                   Kubernetes manifests for EKS (plain YAML)
+├── k8s/                   Kubernetes: base/ + overlays/{dev,staging,prod} (Kustomize), cluster/
 ├── scripts/               push-images.sh (ECR), smoke-test.sh
 ├── docs/                  Handover documentation
 └── docker-compose.yml     Full local stack
@@ -96,5 +96,5 @@ docker build -f services/user-service/Dockerfile -t user-service .
 docker build -t storefront frontends/storefront
 ```
 
-For EKS, `scripts/push-images.sh [tag]` builds `linux/amd64` images and pushes
-them to ECR. See [docs/SERVICES.md](docs/SERVICES.md#building-images).
+For EKS, `scripts/push-images.sh <tag>` builds `linux/amd64` images and pushes
+them to ECR (`dev`, `staging`, or a release tag such as `v2` for prod). See [docs/SERVICES.md](docs/SERVICES.md#building-images).

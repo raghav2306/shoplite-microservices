@@ -8,7 +8,7 @@ flowchart TB
 
     subgraph aws[AWS]
         alb[ALB<br/>Ingress: frontends]
-        subgraph eks[EKS · namespace ecommerce]
+        subgraph eks[EKS · one namespace per environment: dev / staging / prod]
             storefront[storefront<br/>nginx + React]
             admin[admin<br/>nginx + React]
             gateway[api-gateway<br/>Express :3000]
@@ -44,6 +44,11 @@ flowchart TB
     mq -->|consume| notify
     notify --> smtp
 ```
+
+Each environment (`dev`, `staging`, `prod`) is a complete copy of this
+diagram in its own namespace, with its own ALB, databases and secrets. Services
+use short DNS names (`user-service:50051`), so they always reach the instance
+in their own namespace.
 
 ## Request flow
 

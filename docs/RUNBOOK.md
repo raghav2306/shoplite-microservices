@@ -1,11 +1,13 @@
 # Runbook
 
-All commands assume namespace `ecommerce`. Before running anything, confirm
-which cluster you're pointed at:
+There are three environments, each in its own namespace: `dev`, `staging`
+and `prod`. Before running anything, confirm which cluster you're pointed at,
+then set the environment:
 
 ```bash
 kubectl config current-context
-alias k='kubectl -n ecommerce'
+ENV=prod                     # dev | staging | prod
+alias k="kubectl -n $ENV"
 ```
 
 ## Contents
@@ -23,20 +25,32 @@ alias k='kubectl -n ecommerce'
 
 Follow [k8s/README.md](../k8s/README.md). It covers cluster prerequisites
 (EBS CSI driver, AWS Load Balancer Controller, node size), pushing images,
-secrets, and `kubectl apply -R -f k8s/`.
+per-environment secrets, and `kubectl apply -k k8s/overlays/<env>`.
 
 ## Release a new version
 
-Use a **new image tag for every release**. The Deployments use
-`imagePullPolicy: IfNotPresent`, so pushing again under the same tag does not
-roll out new code.
+**dev and staging** use moving tags (`dev`, `staging`) with
+`imagePullPolicy: Always`, so pushing and restarting is enough:
 
 ```bash
-scripts/push-images.sh v2                       # builds linux/amd64, pushes all images
-# then update `image: ...:v2` in k8s/<service>/deployment.yaml, commit, and:
-kubectl apply -R -f k8s/
-k rollout status deploy/<service> --timeout=180s
+scripts/push-images.sh staging
+kubectl -n staging rollout restart deploy
+kubectl -n staging rollout status deploy/api-gateway --timeout=180s
 ```
+
+**prod** uses a pinned tag with `IfNotPresent`, so every release needs a
+**new** tag:
+
+```bash
+scripts/push-images.sh v2
+# set newTag: v2 for the images in k8s/overlays/prod/kustomization.yaml, commit, then:
+kubectl kustomize k8s/overlays/prod | less      # review
+kubectl apply -k k8s/overlays/prod
+kubectl -n prod rollout status deploy/api-gateway --timeout=180s
+```
+
+Promote the same build through the environments (dev → staging → prod).
+Don't rebuild between staging and prod.
 
 Rollouts use `maxUnavailable: 0`. A new pod has to pass its readiness probe
 before an old one is removed, so a bad build stalls the rollout instead of
@@ -50,7 +64,7 @@ fields; never renumber or remove existing ones.
 
 ```bash
 k get pods,pvc,ingress                      # all pods Running and READY, PVCs Bound, Ingress has an ADDRESS
-scripts/smoke-test.sh https://<domain>      # exits non-zero on failure
+scripts/smoke-test.sh http://<alb-hostname>  # that environment's ALB; exits non-zero on failure
 ```
 
 The smoke test checks both frontends, the product API, signup, login, an
@@ -65,8 +79,8 @@ k rollout history deploy/<service>          # list revisions
 k rollout undo deploy/<service> --to-revision=<n>
 ```
 
-Then revert the `image:` tag in git, so the next `kubectl apply` doesn't
-reintroduce the bad version.
+For prod, also revert `newTag` in `k8s/overlays/prod/kustomization.yaml`, so
+the next `kubectl apply -k` doesn't reintroduce the bad version.
 
 ---
 
@@ -74,15 +88,15 @@ reintroduce the bad version.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `ImagePullBackOff` | Image or tag not in ECR, or node role lacks ECR read | `aws ecr describe-images --repository-name dev/<service>`; re-run `push-images.sh` |
+| `ImagePullBackOff` | Image or tag not in ECR, or node role lacks ECR read | `aws ecr describe-images --repository-name ecommerce/<service>`; re-run `push-images.sh <tag>` |
 | `CrashLoopBackOff`, log says `exec format error` | arm64 image on amd64 nodes | Rebuild with `scripts/push-images.sh` (forces `linux/amd64`) |
-| `CreateContainerConfigError` | Secret missing | `k get secrets`; create it from `k8s/<name>/secret.yaml.example`, then apply |
+| `kubectl apply -k` fails: `secrets/<name>.env: no such file` | Secrets not created for this environment | Copy `k8s/secrets.example/*.env` to `k8s/overlays/<env>/secrets/` and set values |
 | PVC `Pending`, Mongo or RabbitMQ pod `Pending` | EBS CSI driver add-on missing, or its IAM role missing | `k describe pvc <name>`; install the add-on ([k8s/README](../k8s/README.md)) |
-| App pods `Pending`, `Too many pods` | Node pod limit reached (t3.small allows 11) | Use t3.medium or larger, or add nodes |
+| App pods `Pending`, `Too many pods` or `Insufficient memory` | Node capacity: all 3 environments share the cluster (~34 app pods) | Add nodes, or use larger instances (3 × t3.large minimum) |
 | user- or product-service restarts once at cold start | MongoDB not ready yet; the service exits 1 by design | None, if it stabilises. If it keeps restarting, check Mongo |
-| Service logs `Authentication failed` against Mongo | Password in `secret.yaml` changed after the volume was first created | Mongo keeps its original password. Change it with [Rotate MongoDB password](#rotate-the-mongodb-password), or delete the PVC (**deletes data**) |
+| Service logs `Authentication failed` against Mongo | Password in `secrets/*.env` changed after the volume was first created | Mongo keeps its original password. Change it with [Rotate MongoDB password](#rotate-the-mongodb-password), or delete the PVC (**deletes data**) |
 | Ingress has no `ADDRESS` | AWS Load Balancer Controller missing or failing | `kubectl -n kube-system logs deploy/aws-load-balancer-controller` |
-| Every `/api` call returns 502 or 503 from the ALB | api-gateway targets unhealthy | EC2 → Target groups → health. The gateway health check must be `/health` (annotation on `k8s/api-gateway/service.yaml`) |
+| Every `/api` call returns 502 or 503 from the ALB | api-gateway targets unhealthy | EC2 → Target groups → health. The gateway health check must be `/health` (annotation on `k8s/base/api-gateway/service.yaml`) |
 | `/api/orders` returns 503, everything else works | order-service not deployed or down | Expected until order-service manifests exist |
 | Login works, then every call returns 401 | `JWT_SECRET` changed (tokens invalidated) | Users must log in again. Expected after a secret rotation |
 | Admin panel says "doesn't have admin access" | User not promoted, or old token | [Promote](#promote-a-user-to-admin), then log out and back in |
@@ -118,9 +132,8 @@ The user must log out and back in to get a token with the admin role.
 This logs out **every** user, because all existing tokens become invalid.
 
 ```bash
-# set a new JWT_SECRET in k8s/user-service/secret.yaml (openssl rand -hex 32)
-kubectl apply -f k8s/user-service/secret.yaml
-k rollout restart deploy/user-service
+# set a new JWT_SECRET in k8s/overlays/$ENV/secrets/user-service.env (openssl rand -hex 32)
+kubectl apply -k k8s/overlays/$ENV       # new Secret name (content hash), so user-service rolls automatically
 ```
 
 ### Rotate the MongoDB password
@@ -131,9 +144,8 @@ the Secret alone does nothing. Change it inside MongoDB first:
 ```bash
 k exec -it mongodb-users-0 -- mongosh -u root -p '<old>' --authenticationDatabase admin \
   --eval "db.getSiblingDB('admin').changeUserPassword('root', '<new>')"
-# update MONGO_INITDB_ROOT_PASSWORD in k8s/mongodb-users/secret.yaml
-kubectl apply -f k8s/mongodb-users/secret.yaml
-k rollout restart deploy/user-service          # picks up the new MONGO_URI
+# update MONGO_INITDB_ROOT_PASSWORD in k8s/overlays/$ENV/secrets/mongodb-users.env
+kubectl apply -k k8s/overlays/$ENV             # user-service rolls and picks up the new MONGO_URI
 ```
 
 Do the same for `mongodb-products` and product-service.

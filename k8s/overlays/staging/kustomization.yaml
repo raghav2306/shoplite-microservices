@@ -1,0 +1,61 @@
+# Staging: mirrors prod (2 replicas), rolling "staging" tag (re-pulled on every rollout).
+# Deploy:  kubectl apply -k k8s/overlays/staging
+# Preview: kubectl kustomize k8s/overlays/staging
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: staging
+
+resources:
+  - namespace.yaml
+  - ../../base
+
+labels:
+  - pairs:
+      app.kubernetes.io/environment: staging
+    includeSelectors: false
+
+# Real values live in secrets/*.env (git-ignored); templates are in k8s/secrets.example/.
+# The generated name gets a content hash, so changing a value rolls the pods that use it.
+secretGenerator:
+  - name: mongodb-users-secret
+    envs: [secrets/mongodb-users.env]
+  - name: mongodb-products-secret
+    envs: [secrets/mongodb-products.env]
+  - name: rabbitmq-secret
+    envs: [secrets/rabbitmq.env]
+  - name: user-service-secret
+    envs: [secrets/user-service.env]
+
+images:
+  - name: 573802369594.dkr.ecr.us-east-1.amazonaws.com/ecommerce/user-service
+    newTag: staging
+  - name: 573802369594.dkr.ecr.us-east-1.amazonaws.com/ecommerce/product-service
+    newTag: staging
+  - name: 573802369594.dkr.ecr.us-east-1.amazonaws.com/ecommerce/api-gateway
+    newTag: staging
+  - name: 573802369594.dkr.ecr.us-east-1.amazonaws.com/ecommerce/storefront
+    newTag: staging
+  - name: 573802369594.dkr.ecr.us-east-1.amazonaws.com/ecommerce/admin
+    newTag: staging
+
+replicas:
+  - name: user-service
+    count: 2
+  - name: product-service
+    count: 2
+  - name: api-gateway
+    count: 2
+  - name: storefront
+    count: 2
+  - name: admin
+    count: 2
+
+# Mutable tag: pull on every pod start so a rollout picks up the latest push
+patches:
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always

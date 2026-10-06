@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-service-config
+data:
+  GRPC_PORT: "50051"
+  JWT_EXPIRES_IN: "7d"

@@ -1,0 +1,45 @@
+# Shared manifests for every environment. Don't apply this directly:
+# use an overlay, e.g. kubectl apply -k k8s/overlays/dev
+# Namespace, image tags, replicas and secrets are set per overlay.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - mongodb-users/statefulset.yaml
+  - mongodb-users/service.yaml
+  - mongodb-products/statefulset.yaml
+  - mongodb-products/service.yaml
+  - rabbitmq/statefulset.yaml
+  - rabbitmq/service.yaml
+  - user-service/configmap.yaml
+  - user-service/deployment.yaml
+  - user-service/service.yaml
+  - product-service/configmap.yaml
+  - product-service/deployment.yaml
+  - product-service/service.yaml
+  - api-gateway/configmap.yaml
+  - api-gateway/deployment.yaml
+  - api-gateway/service.yaml
+  - storefront/deployment.yaml
+  - storefront/service.yaml
+  - admin/deployment.yaml
+  - admin/service.yaml
+  - ingress.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: ecommerce
+    includeSelectors: false
+
+# ECR repositories (pushed by scripts/push-images.sh). Overlays set the tag.
+images:
+  - name: user-service
+    newName: 573802369594.dkr.ecr.us-east-1.amazonaws.com/ecommerce/user-service
+  - name: product-service
+    newName: 573802369594.dkr.ecr.us-east-1.amazonaws.com/ecommerce/product-service
+  - name: api-gateway
+    newName: 573802369594.dkr.ecr.us-east-1.amazonaws.com/ecommerce/api-gateway
+  - name: storefront
+    newName: 573802369594.dkr.ecr.us-east-1.amazonaws.com/ecommerce/storefront
+  - name: admin
+    newName: 573802369594.dkr.ecr.us-east-1.amazonaws.com/ecommerce/admin

@@ -1,0 +1,52 @@
+# Production: 2 replicas, pinned release tag. Bump newTag to release.
+# Deploy:  kubectl apply -k k8s/overlays/prod
+# Preview: kubectl kustomize k8s/overlays/prod
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: prod
+
+resources:
+  - namespace.yaml
+  - ../../base
+
+labels:
+  - pairs:
+      app.kubernetes.io/environment: prod
+    includeSelectors: false
+
+# Real values live in secrets/*.env (git-ignored); templates are in k8s/secrets.example/.
+# The generated name gets a content hash, so changing a value rolls the pods that use it.
+secretGenerator:
+  - name: mongodb-users-secret
+    envs: [secrets/mongodb-users.env]
+  - name: mongodb-products-secret
+    envs: [secrets/mongodb-products.env]
+  - name: rabbitmq-secret
+    envs: [secrets/rabbitmq.env]
+  - name: user-service-secret
+    envs: [secrets/user-service.env]
+
+images:
+  - name: 573802369594.dkr.ecr.us-east-1.amazonaws.com/ecommerce/user-service
+    newTag: v1
+  - name: 573802369594.dkr.ecr.us-east-1.amazonaws.com/ecommerce/product-service
+    newTag: v1
+  - name: 573802369594.dkr.ecr.us-east-1.amazonaws.com/ecommerce/api-gateway
+    newTag: v1
+  - name: 573802369594.dkr.ecr.us-east-1.amazonaws.com/ecommerce/storefront
+    newTag: v1
+  - name: 573802369594.dkr.ecr.us-east-1.amazonaws.com/ecommerce/admin
+    newTag: v1
+
+replicas:
+  - name: user-service
+    count: 2
+  - name: product-service
+    count: 2
+  - name: api-gateway
+    count: 2
+  - name: storefront
+    count: 2
+  - name: admin
+    count: 2

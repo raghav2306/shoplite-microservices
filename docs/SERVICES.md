@@ -31,7 +31,7 @@ The public REST API. It is stateless and scales horizontally.
 | Readiness (diagnostic) | `GET /ready` → 200 when user, product and order services all report SERVING, otherwise 503 with per-dependency status. **Do not use it as the K8s readiness probe**, because it would cascade backend outages. |
 | Exposed | Through the ALB at `/api/*`. `/health` and `/ready` are not exposed publicly. |
 | Depends on | user-service (hard: every authenticated call), product-service, order-service |
-| Image | `dev/api-gateway`, build context: repo root |
+| Image | `ecommerce/api-gateway`, build context: repo root |
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
@@ -49,7 +49,7 @@ Handles registration, login, JWT validation and roles.
 | Port | `50051` gRPC |
 | Health | `grpc.health.v1`: service `""` is readiness (MongoDB connected), `liveness` is the process |
 | Depends on | mongodb-users (hard) |
-| Image | `dev/user-service`, build context: repo root |
+| Image | `ecommerce/user-service`, build context: repo root |
 | Admin tool | `node src/scripts/promoteAdmin.js <email>`, run inside a pod (see [RUNBOOK](RUNBOOK.md#promote-a-user-to-admin)) |
 
 | Variable | Required | Default | Notes |
@@ -69,7 +69,7 @@ Handles the product catalogue and atomic stock reservation.
 | Health | `grpc.health.v1` (same as user-service) |
 | Depends on | mongodb-products (hard) |
 | Called by | api-gateway, order-service (`ReserveStock`, `ReleaseStock`) |
-| Image | `dev/product-service`, build context: repo root |
+| Image | `ecommerce/product-service`, build context: repo root |
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
@@ -87,7 +87,7 @@ Handles orders and order status, and publishes order events.
 | Port | `50053` gRPC |
 | Health | `grpc.health.v1`. Readiness covers MongoDB only. RabbitMQ is a soft dependency: if it's down, emails are lost but orders still work. |
 | Depends on | mongodb-orders (hard), product-service (needed to place and cancel orders), RabbitMQ (soft) |
-| Image | `dev/order-service`, build context: repo root |
+| Image | `ecommerce/order-service`, build context: repo root |
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
@@ -110,7 +110,7 @@ replicas is safe: they share the queue as competing consumers.
 | Readiness | `GET /readyz` → 200 while consuming from RabbitMQ, otherwise 503 |
 | Depends on | RabbitMQ (hard), SMTP server |
 | Retry policy | 3 attempts, then the message goes to `notification_service_queue.dlq`. Invalid JSON goes to the DLQ immediately. |
-| Image | `dev/notification-service`, build context: repo root |
+| Image | `ecommerce/notification-service`, build context: repo root |
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
@@ -131,7 +131,7 @@ The customer React app, served by nginx. It is stateless.
 | Port | `80` HTTP |
 | Health | `GET /healthz` → 200 |
 | Routing | SPA: unknown paths serve `index.html`. `/assets/*` is cached for 1 year (hashed filenames). |
-| Image | `dev/storefront`, build context: `frontends/storefront` |
+| Image | `ecommerce/storefront`, build context: `frontends/storefront` |
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
@@ -146,7 +146,7 @@ The admin React app, served by nginx **under `/admin/`**. It is stateless.
 | Port | `80` HTTP |
 | Health | `GET /healthz` → 200 |
 | Routing | App at `/admin/`. `/` redirects to `/admin/`. API calls go to `/api`. |
-| Image | `dev/admin`, build context: `frontends/admin` |
+| Image | `ecommerce/admin`, build context: `frontends/admin` |
 
 Configuration: same as storefront.
 
@@ -155,7 +155,7 @@ Configuration: same as storefront.
 | | |
 |---|---|
 | Image | `mongo:6.0`; MongoDB 5+ needs a CPU with AVX, which all current EC2 instance types have |
-| K8s | StatefulSet with 1 replica, headless Service, 1Gi gp3 PVC, root auth from `mongodb-<name>-secret` |
+| K8s | StatefulSet with 1 replica per environment, headless Service, 1Gi gp3 PVC, root auth from `mongodb-<name>-secret` |
 | Health | `mongosh --eval "db.adminCommand('ping')"` |
 | Backups | **None configured.** See [RUNBOOK](RUNBOOK.md#back-up-and-restore-mongodb) |
 
@@ -182,12 +182,14 @@ Configuration: same as storefront.
   `--platform linux/amd64`. `scripts/push-images.sh` does this.
 - **order-service and notification-service Dockerfiles still pin
   `--platform=linux/arm64`.** Remove those flags before building them for EKS.
-- **Image tags are not immutable.** Tag every release (`v2`, a git SHA, …),
-  because the manifests use `imagePullPolicy: IfNotPresent`.
+- **Tags:** `dev` and `staging` are moving tags (pulled with `Always`). Prod
+  uses a new pinned tag per release (`v2`, a git SHA, …) with `IfNotPresent`.
 
 ## Resource baseline (from k8s manifests)
 
-| Workload | Replicas | CPU request | Memory request / limit |
+Replicas for the stateless services: dev 1, staging 2, prod 2.
+
+| Workload | Replicas (prod) | CPU request | Memory request / limit |
 |---|---|---|---|
 | api-gateway, user-service, product-service | 2 each | 50m | 96Mi / 256Mi |
 | storefront, admin | 2 each | 10m | 16Mi / 64Mi |

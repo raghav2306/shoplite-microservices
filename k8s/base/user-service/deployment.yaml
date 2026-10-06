@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0 # keep full capacity during rollouts
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+        - name: user-service
+          # Registry and tag are set by kustomization.yaml (base) and each overlay
+          image: user-service
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: grpc
+              containerPort: 50051
+          envFrom:
+            - configMapRef:
+                name: user-service-config
+            - secretRef:
+                name: user-service-secret
+          env:
+            - name: MONGO_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-users-secret
+                  key: MONGO_INITDB_ROOT_USERNAME
+            - name: MONGO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-users-secret
+                  key: MONGO_INITDB_ROOT_PASSWORD
+            # $(VAR) is expanded by Kubernetes from the vars defined above
+            - name: MONGO_URI
+              value: mongodb://$(MONGO_USER):$(MONGO_PASSWORD)@mongodb-users-0.mongodb-users:27017/users?authSource=admin
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              memory: 256Mi
+          startupProbe:
+            grpc:
+              port: 50051
+              service: liveness
+            periodSeconds: 5
+            failureThreshold: 24 # up to 2 min to connect to Mongo on boot
+          livenessProbe:
+            grpc:
+              port: 50051
+              service: liveness
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            grpc:
+              port: 50051 # "" service = all dependencies (Mongo) up
+            periodSeconds: 5
+            failureThreshold: 2
