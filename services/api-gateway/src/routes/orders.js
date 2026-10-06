@@ -1,5 +1,5 @@
 const express = require("express");
-const { orderClient, productClient } = require("../clients/grpcClients");
+const { orderClient } = require("../clients/grpcClients");
 const { authenticate } = require("../middleware/auth");
 
 const router = express.Router();
@@ -7,33 +7,34 @@ const router = express.Router();
 router.post("/", authenticate, (req, res) => {
   const { items } = req.body;
 
-  // Check stock for all items before creating order
-  const stockChecks = items.map(
-    (item) =>
-      new Promise((resolve, reject) => {
-        productClient.CheckStock(
-          { productId: item.productId, quantity: item.quantity },
-          (err, response) => {
-            if (err) return reject(err);
-            if (!response.available)
-              return reject(new Error(`Insufficient stock for product ${item.productId}`));
-            resolve(response);
-          }
-        );
-      })
-  );
+  const valid =
+    Array.isArray(items) &&
+    items.length > 0 &&
+    items.every(
+      (i) => typeof i?.productId === "string" && Number.isInteger(i.quantity) && i.quantity > 0
+    );
+  if (!valid) {
+    return res
+      .status(400)
+      .json({ error: "items must be a non-empty array of { productId, quantity > 0 }" });
+  }
 
-  Promise.all(stockChecks)
-    .then(() => {
-      orderClient.CreateOrder(
-        { userId: req.user.userId, items },
-        (err, response) => {
-          if (err) return res.status(400).json({ error: err.message });
-          res.status(201).json(response);
-        }
-      );
-    })
-    .catch((err) => res.status(400).json({ error: err.message }));
+  // Only productId and quantity are forwarded; price comes from product-service.
+  // Stock is reserved atomically by order-service.
+  orderClient.CreateOrder(
+    {
+      userId: req.user.userId,
+      email: req.user.email,
+      items: items.map(({ productId, quantity }) => ({ productId, quantity })),
+    },
+    (err, response) => {
+      if (err) {
+        const status = err.code === 14 ? 503 : 400; // UNAVAILABLE -> 503
+        return res.status(status).json({ error: err.details || err.message });
+      }
+      res.status(201).json(response);
+    }
+  );
 });
 
 router.get("/", authenticate, (req, res) => {
@@ -44,7 +45,7 @@ router.get("/", authenticate, (req, res) => {
 });
 
 router.get("/:id", authenticate, (req, res) => {
-  orderClient.GetOrder({ orderId: req.params.id }, (err, response) => {
+  orderClient.GetOrder({ orderId: req.params.id, userId: req.user.userId }, (err, response) => {
     if (err) return res.status(404).json({ error: err.message });
     res.json(response);
   });

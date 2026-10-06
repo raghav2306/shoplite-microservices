@@ -23,3 +23,20 @@ spec:
                 name: user-service-config
             - secretRef:
                 name: user-service-secret
+          startupProbe:
+            grpc:
+              port: 50051
+              service: liveness
+            periodSeconds: 5
+            failureThreshold: 24  # up to 2 min to connect to Mongo on boot
+          livenessProbe:
+            grpc:
+              port: 50051
+              service: liveness
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            grpc:
+              port: 50051  # "" service = all dependencies (Mongo) up
+            periodSeconds: 5
+            failureThreshold: 2

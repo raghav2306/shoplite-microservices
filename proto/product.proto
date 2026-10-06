@@ -8,6 +8,10 @@ service ProductService {
   rpc ListProducts (ListProductsRequest) returns (ListProductsResponse);
   rpc CheckStock (CheckStockRequest) returns (CheckStockResponse);
   rpc DecrementStock (DecrementStockRequest) returns (DecrementStockResponse);
+  // Atomically reserves stock for every item (all or nothing) and returns current prices.
+  rpc ReserveStock (ReserveStockRequest) returns (ReserveStockResponse);
+  // Returns previously reserved stock (order creation failed or order cancelled).
+  rpc ReleaseStock (ReleaseStockRequest) returns (ReleaseStockResponse);
 }
 
 message CreateProductRequest {
@@ -60,4 +64,31 @@ message DecrementStockRequest {
 message DecrementStockResponse {
   bool success = 1;
   int32 remainingStock = 2;
+}
+
+message StockItem {
+  string productId = 1;
+  int32 quantity = 2;
+}
+
+message ReservedItem {
+  string productId = 1;
+  int32 quantity = 2;
+  double price = 3;
+}
+
+message ReserveStockRequest {
+  repeated StockItem items = 1;
+}
+
+message ReserveStockResponse {
+  repeated ReservedItem items = 1;
+}
+
+message ReleaseStockRequest {
+  repeated StockItem items = 1;
+}
+
+message ReleaseStockResponse {
+  bool success = 1;
 }

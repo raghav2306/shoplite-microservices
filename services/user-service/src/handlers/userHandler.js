@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 const User = require("../models/User");
 
 const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
@@ -26,9 +27,13 @@ async function Login(call, callback) {
     const valid = await user.comparePassword(password);
     if (!valid) return callback({ code: 5, message: "Invalid credentials" });
 
-    const token = jwt.sign({ userId: user._id.toString(), email: user.email }, JWT_SECRET, {
-      expiresIn: JWT_EXPIRES_IN,
-    });
+    const token = jwt.sign(
+      { userId: user._id.toString(), email: user.email, role: user.role },
+      JWT_SECRET,
+      {
+        expiresIn: JWT_EXPIRES_IN,
+      }
+    );
 
     callback(null, { token, userId: user._id.toString() });
   } catch (err) {
@@ -40,14 +45,22 @@ function ValidateToken(call, callback) {
   try {
     const { token } = call.request;
     const decoded = jwt.verify(token, JWT_SECRET);
-    callback(null, { valid: true, userId: decoded.userId, email: decoded.email });
+    callback(null, {
+      valid: true,
+      userId: decoded.userId,
+      email: decoded.email,
+      role: decoded.role || "user",
+    });
   } catch {
-    callback(null, { valid: false, userId: "", email: "" });
+    callback(null, { valid: false, userId: "", email: "", role: "" });
   }
 }
 
 async function GetUser(call, callback) {
   try {
+    if (!mongoose.isValidObjectId(call.request.userId)) {
+      return callback({ code: 5, message: "User not found" });
+    }
     const user = await User.findById(call.request.userId);
     if (!user) return callback({ code: 5, message: "User not found" });
     callback(null, { id: user._id.toString(), name: user.name, email: user.email });

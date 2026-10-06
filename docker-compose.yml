@@ -12,6 +12,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+
+  # Local SMTP sink for notification-service; view sent mail at http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"
+    restart: unless-stopped
 
   mongo-users:
     image: mongo:6.0
@@ -22,6 +30,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   mongo-products:
     image: mongo:6.0
@@ -32,6 +41,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   mongo-orders:
     image: mongo:6.0
@@ -42,7 +52,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
+  # App service healthchecks come from each Dockerfile's HEALTHCHECK
   user-service:
     build:
       context: .
@@ -55,6 +67,7 @@ services:
     depends_on:
       mongo-users:
         condition: service_healthy
+    restart: unless-stopped
 
   product-service:
     build:
@@ -63,12 +76,10 @@ services:
     environment:
       GRPC_PORT: 50052
       MONGO_URI: mongodb://mongo-products:27017/products
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
     depends_on:
-      rabbitmq:
-        condition: service_healthy
       mongo-products:
         condition: service_healthy
+    restart: unless-stopped
 
   order-service:
     build:
@@ -78,11 +89,15 @@ services:
       GRPC_PORT: 50053
       MONGO_URI: mongodb://mongo-orders:27017/orders
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      PRODUCT_SERVICE_URL: product-service:50052
     depends_on:
-      rabbitmq:
-        condition: service_healthy
       mongo-orders:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      product-service:
+        condition: service_healthy
+    restart: unless-stopped
 
   notification-service:
     build:
@@ -90,10 +105,16 @@ services:
       dockerfile: services/notification-service/Dockerfile
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
       FROM_EMAIL: noreply@ecommerce.com
+      HEALTH_PORT: 8080
     depends_on:
       rabbitmq:
         condition: service_healthy
+      mailpit:
+        condition: service_started
+    restart: unless-stopped
 
   api-gateway:
     build:
@@ -107,9 +128,13 @@ services:
       PRODUCT_SERVICE_URL: product-service:50052
       ORDER_SERVICE_URL: order-service:50053
     depends_on:
-      - user-service
-      - product-service
-      - order-service
+      user-service:
+        condition: service_healthy
+      product-service:
+        condition: service_healthy
+      order-service:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   mongo_users:

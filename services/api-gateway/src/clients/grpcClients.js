@@ -1,6 +1,7 @@
 const grpc = require("@grpc/grpc-js");
 const protoLoader = require("@grpc/proto-loader");
 const path = require("path");
+const { service: healthService } = require("grpc-health-check");
 
 const PROTO_DIR = path.join(__dirname, "../../../../proto");
 
@@ -37,4 +38,14 @@ const orderClient = loadClient(
   process.env.ORDER_SERVICE_URL || "localhost:50053"
 );
 
-module.exports = { userClient, productClient, orderClient };
+const HealthClient = grpc.makeClientConstructor(healthService, "Health");
+
+// grpc.health.v1 clients for readiness checks
+const healthClient = (address) => new HealthClient(address, grpc.credentials.createInsecure());
+const healthClients = {
+  "user-service": healthClient(process.env.USER_SERVICE_URL || "localhost:50051"),
+  "product-service": healthClient(process.env.PRODUCT_SERVICE_URL || "localhost:50052"),
+  "order-service": healthClient(process.env.ORDER_SERVICE_URL || "localhost:50053"),
+};
+
+module.exports = { userClient, productClient, orderClient, healthClients };

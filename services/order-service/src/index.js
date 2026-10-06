@@ -4,7 +4,8 @@ const protoLoader = require("@grpc/proto-loader");
 const mongoose = require("mongoose");
 const path = require("path");
 const handlers = require("./handlers/orderHandler");
-const { connect: connectRabbitMQ } = require("./rabbitmq/publisher");
+const rabbitmq = require("./rabbitmq/publisher");
+const { health, trackMongo, bindServer, handleShutdown, fatal } = require("./lifecycle");
 
 const PROTO_PATH = path.join(__dirname, "../../../proto/order.proto");
 
@@ -18,18 +19,23 @@ const packageDef = protoLoader.loadSync(PROTO_PATH, {
 const orderProto = grpc.loadPackageDefinition(packageDef).order;
 
 async function main() {
+  trackMongo();
   await mongoose.connect(process.env.MONGO_URI || "mongodb://localhost:27017/orders");
   console.log("Connected to MongoDB");
 
-  await connectRabbitMQ();
+  // RabbitMQ only feeds notifications, so it isn't a readiness dependency;
+  // the publisher keeps retrying in the background instead of blocking startup.
+  rabbitmq.connect();
 
   const server = new grpc.Server();
   server.addService(orderProto.OrderService.service, handlers);
+  health.addToServer(server);
 
   const PORT = process.env.GRPC_PORT || 50053;
-  server.bindAsync(`0.0.0.0:${PORT}`, grpc.ServerCredentials.createInsecure(), () => {
-    console.log(`Order Service gRPC running on port ${PORT}`);
-  });
+  await bindServer(server, PORT);
+  console.log(`Order Service gRPC running on port ${PORT}`);
+
+  handleShutdown(server, () => rabbitmq.close());
 }
 
-main().catch(console.error);
+main().catch(fatal);

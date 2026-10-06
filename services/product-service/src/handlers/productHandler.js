@@ -1,4 +1,29 @@
+const mongoose = require("mongoose");
 const Product = require("../models/Product");
+
+const NOT_FOUND = 5;
+const FAILED_PRECONDITION = 9;
+const INVALID_ARGUMENT = 3;
+const INTERNAL = 13;
+
+function grpcError(code, message) {
+  return Object.assign(new Error(message), { code });
+}
+
+function toGrpcError(err) {
+  return Number.isInteger(err.code) && err.code < 17
+    ? err
+    : { code: INTERNAL, message: "Internal error" };
+}
+
+function assertValidItem({ productId, quantity }) {
+  if (!mongoose.isValidObjectId(productId)) {
+    throw grpcError(NOT_FOUND, `Product ${productId} not found`);
+  }
+  if (!Number.isInteger(quantity) || quantity <= 0) {
+    throw grpcError(INVALID_ARGUMENT, `Invalid quantity for product ${productId}`);
+  }
+}
 
 async function CreateProduct(call, callback) {
   try {
@@ -17,8 +42,11 @@ async function CreateProduct(call, callback) {
 
 async function GetProduct(call, callback) {
   try {
+    if (!mongoose.isValidObjectId(call.request.productId)) {
+      return callback({ code: NOT_FOUND, message: "Product not found" });
+    }
     const product = await Product.findById(call.request.productId);
-    if (!product) return callback({ code: 5, message: "Product not found" });
+    if (!product) return callback({ code: NOT_FOUND, message: "Product not found" });
     callback(null, {
       id: product._id.toString(),
       name: product.name,
@@ -51,8 +79,11 @@ async function ListProducts(call, callback) {
 async function CheckStock(call, callback) {
   try {
     const { productId, quantity } = call.request;
+    if (!mongoose.isValidObjectId(productId)) {
+      return callback({ code: NOT_FOUND, message: "Product not found" });
+    }
     const product = await Product.findById(productId);
-    if (!product) return callback({ code: 5, message: "Product not found" });
+    if (!product) return callback({ code: NOT_FOUND, message: "Product not found" });
     callback(null, {
       available: product.stock >= quantity,
       currentStock: product.stock,
@@ -64,17 +95,76 @@ async function CheckStock(call, callback) {
 
 async function DecrementStock(call, callback) {
   try {
+    assertValidItem(call.request);
     const { productId, quantity } = call.request;
-    const product = await Product.findById(productId);
-    if (!product || product.stock < quantity) {
-      return callback({ code: 9, message: "Insufficient stock" });
-    }
-    product.stock -= quantity;
-    await product.save();
+    // Conditional update so concurrent callers can't take stock below zero.
+    const product = await Product.findOneAndUpdate(
+      { _id: productId, stock: { $gte: quantity } },
+      { $inc: { stock: -quantity } },
+      { new: true }
+    );
+    if (!product) return callback({ code: FAILED_PRECONDITION, message: "Insufficient stock" });
     callback(null, { success: true, remainingStock: product.stock });
   } catch (err) {
-    callback({ code: 13, message: err.message });
+    callback(toGrpcError(err));
   }
 }
 
-module.exports = { CreateProduct, GetProduct, ListProducts, CheckStock, DecrementStock };
+async function releaseItems(items) {
+  for (const { productId, quantity } of items) {
+    await Product.updateOne({ _id: productId }, { $inc: { stock: quantity } });
+  }
+}
+
+async function ReserveStock(call, callback) {
+  const reserved = [];
+  try {
+    const { items } = call.request;
+    if (!items.length) throw grpcError(INVALID_ARGUMENT, "No items to reserve");
+    items.forEach(assertValidItem);
+
+    for (const { productId, quantity } of items) {
+      const product = await Product.findOneAndUpdate(
+        { _id: productId, stock: { $gte: quantity } },
+        { $inc: { stock: -quantity } },
+        { new: true }
+      );
+      if (!product) {
+        const exists = await Product.exists({ _id: productId });
+        throw exists
+          ? grpcError(FAILED_PRECONDITION, `Insufficient stock for product ${productId}`)
+          : grpcError(NOT_FOUND, `Product ${productId} not found`);
+      }
+      reserved.push({ productId, quantity, price: product.price });
+    }
+
+    callback(null, { items: reserved });
+  } catch (err) {
+    // All or nothing: give back whatever was taken before the failure.
+    await releaseItems(reserved).catch((e) =>
+      console.error("Failed to roll back partial reservation:", e.message, reserved)
+    );
+    callback(toGrpcError(err));
+  }
+}
+
+async function ReleaseStock(call, callback) {
+  try {
+    const { items } = call.request;
+    items.forEach(assertValidItem);
+    await releaseItems(items);
+    callback(null, { success: true });
+  } catch (err) {
+    callback(toGrpcError(err));
+  }
+}
+
+module.exports = {
+  CreateProduct,
+  GetProduct,
+  ListProducts,
+  CheckStock,
+  DecrementStock,
+  ReserveStock,
+  ReleaseStock,
+};

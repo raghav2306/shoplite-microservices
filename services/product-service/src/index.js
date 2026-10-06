@@ -4,7 +4,7 @@ const protoLoader = require("@grpc/proto-loader");
 const mongoose = require("mongoose");
 const path = require("path");
 const handlers = require("./handlers/productHandler");
-const { startConsumer } = require("./rabbitmq/consumer");
+const { health, trackMongo, bindServer, handleShutdown, fatal } = require("./lifecycle");
 
 const PROTO_PATH = path.join(__dirname, "../../../proto/product.proto");
 
@@ -18,18 +18,19 @@ const packageDef = protoLoader.loadSync(PROTO_PATH, {
 const productProto = grpc.loadPackageDefinition(packageDef).product;
 
 async function main() {
+  trackMongo();
   await mongoose.connect(process.env.MONGO_URI || "mongodb://localhost:27017/products");
   console.log("Connected to MongoDB");
 
-  await startConsumer();
-
   const server = new grpc.Server();
   server.addService(productProto.ProductService.service, handlers);
+  health.addToServer(server);
 
   const PORT = process.env.GRPC_PORT || 50052;
-  server.bindAsync(`0.0.0.0:${PORT}`, grpc.ServerCredentials.createInsecure(), () => {
-    console.log(`Product Service gRPC running on port ${PORT}`);
-  });
+  await bindServer(server, PORT);
+  console.log(`Product Service gRPC running on port ${PORT}`);
+
+  handleShutdown(server);
 }
 
-main().catch(console.error);
+main().catch(fatal);

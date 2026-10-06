@@ -12,9 +12,17 @@ function authenticate(req, res, next) {
     if (err || !response.valid) {
       return res.status(401).json({ error: "Unauthorized" });
     }
-    req.user = { userId: response.userId, email: response.email };
+    req.user = { userId: response.userId, email: response.email, role: response.role };
     next();
   });
 }
 
-module.exports = { authenticate };
+// Use after authenticate
+function requireRole(role) {
+  return (req, res, next) => {
+    if (req.user?.role !== role) return res.status(403).json({ error: "Forbidden" });
+    next();
+  };
+}
+
+module.exports = { authenticate, requireRole };

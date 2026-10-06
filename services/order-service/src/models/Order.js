@@ -9,6 +9,7 @@ const orderItemSchema = new mongoose.Schema({
 const orderSchema = new mongoose.Schema(
   {
     userId: { type: String, required: true },
+    email: { type: String }, // for notifications
     items: [orderItemSchema],
     status: {
       type: String,

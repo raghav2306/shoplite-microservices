@@ -18,7 +18,8 @@ message OrderItem {
 
 message CreateOrderRequest {
   string userId = 1;
-  repeated OrderItem items = 2;
+  repeated OrderItem items = 2; // price is ignored; it is taken from product-service
+  string email = 3;
 }
 
 message CreateOrderResponse {
@@ -29,6 +30,7 @@ message CreateOrderResponse {
 
 message GetOrderRequest {
   string orderId = 1;
+  string userId = 2; // owner; order is only returned if it belongs to this user
 }
 
 message GetOrderResponse {
