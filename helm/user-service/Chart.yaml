@@ -1,0 +1,20 @@
+apiVersion: v2
+name: user-service
+description: ShopLite user-service. gRPC service for registration, login, JWT validation and roles.
+type: application
+
+# Chart version (SemVer). Bump it whenever the chart or its templates change.
+version: 0.1.0
+
+# Default image tag (values.image.tag overrides it). Keep it in step with the
+# tag pushed by scripts/push-images.sh.
+appVersion: "v1"
+
+keywords:
+  - shoplite
+  - grpc
+  - users
+  - auth
+home: https://github.com/raghav2306/shoplite-microservices
+sources:
+  - https://github.com/raghav2306/shoplite-microservices/tree/main/services/user-service

@@ -1,0 +1,87 @@
+# Default values for the ShopLite user-service chart.
+#
+# Install (release name "user-service" keeps the Service name "user-service",
+# which the api-gateway connects to):
+#   helm upgrade --install user-service helm/user-service -n ecommerce \
+#     --set secret.jwtSecret="$(openssl rand -hex 32)"
+
+replicaCount: 2
+
+image:
+  repository: 573802369594.dkr.ecr.us-east-1.amazonaws.com/dev/user-service
+  # Defaults to the chart's appVersion when empty
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+# Overrides the full resource name. The api-gateway expects "user-service".
+fullnameOverride: ""
+
+# gRPC port the container listens on. Also used for GRPC_PORT and the probes.
+containerPort: 50051
+
+service:
+  type: ClusterIP
+  port: 50051
+
+# Non-secret settings, rendered into a ConfigMap and passed as env vars
+config:
+  jwtExpiresIn: "7d"
+
+# JWT signing secret
+secret:
+  # true:  the chart creates the Secret from jwtSecret (required, so install
+  #        fails without it). Pass it with --set; never commit it in a values file.
+  # false: use a Secret you created yourself (existingSecret), which must
+  #        contain the key JWT_SECRET.
+  create: true
+  jwtSecret: ""
+  existingSecret: ""
+
+# MongoDB connection. Credentials come from the Secret created for the
+# mongodb-users StatefulSet; this chart doesn't manage MongoDB itself.
+mongodb:
+  host: mongodb-users-0.mongodb-users
+  port: 27017
+  database: users
+  authSource: admin
+  existingSecret: mongodb-users-secret
+  usernameKey: MONGO_INITDB_ROOT_USERNAME
+  passwordKey: MONGO_INITDB_ROOT_PASSWORD
+
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 0 # keep full capacity during rollouts
+    maxSurge: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    memory: 256Mi
+
+# gRPC health probes (grpc.health.v1). The port is always containerPort.
+probes:
+  startup:
+    periodSeconds: 5
+    failureThreshold: 24 # up to 2 min to connect to Mongo on boot
+  liveness:
+    periodSeconds: 10
+    failureThreshold: 3
+  readiness:
+    periodSeconds: 5
+    failureThreshold: 2
+
+podAnnotations: {}
+podLabels: {}
+
+# Empty by default; add e.g. runAsNonRoot / readOnlyRootFilesystem when ready
+podSecurityContext: {}
+securityContext: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
