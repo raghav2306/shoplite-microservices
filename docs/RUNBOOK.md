@@ -21,22 +21,28 @@ alias k='kubectl -n ecommerce'
 
 ## First-time deployment
 
-Follow [EKS-DEPLOYMENT.md](EKS-DEPLOYMENT.md). It covers the cluster, the
-EBS CSI driver, the AWS Load Balancer Controller, images, secrets, deployment,
-verification and teardown.
+1. Create the platform with [shoplite-infra](https://github.com/raghav2306/shoplite-infra)
+   (`scripts/apply.sh`): VPC, EKS, add-ons, ECR, the CI role and Argo CD. It also
+   creates the app's Secrets from your shoplite-gitops clone.
+2. Set up CI in this repo ([README → CI/CD](../README.md#cicd)) and push to `main`.
+   CI pushes the images and bumps the tags in shoplite-gitops; Argo CD deploys them.
+3. [Verify](#verify-a-deployment), then [promote the first admin](#promote-a-user-to-admin).
+
+Tear down with `scripts/destroy.sh` in shoplite-infra.
 
 ## Release a new version
 
-Use a **new image tag for every release**. The Deployments use
-`imagePullPolicy: IfNotPresent`, so pushing again under the same tag does not
-roll out new code.
+Merge to `main`. CI builds, scans and pushes every image tagged with the
+commit SHA, then commits the new tags to `shoplite-gitops/overlays/eks`.
+Argo CD syncs that commit within ~3 minutes (press REFRESH in the UI to skip
+the wait). Watch it:
 
 ```bash
-scripts/push-images.sh v2                       # builds linux/amd64, pushes all images
-# then update `image: ...:v2` in k8s/<service>/deployment.yaml, commit, and:
-kubectl apply -R -f k8s/
+kubectl -n argocd get application shoplite-eks          # Synced / Healthy
 k rollout status deploy/<service> --timeout=180s
 ```
+
+ECR tags are immutable, so a tag always means the same image.
 
 Rollouts use `maxUnavailable: 0`. A new pod has to pass its readiness probe
 before an old one is removed, so a bad build stalls the rollout instead of
@@ -59,14 +65,15 @@ authenticated call, and the orders API. It **creates one test user**
 
 ## Roll back
 
+Roll back in Git, not with `kubectl rollout undo`: Argo CD's self-heal would
+put the bad version straight back. In shoplite-gitops:
+
 ```bash
-k rollout undo deploy/<service>             # back to the previous ReplicaSet
-k rollout history deploy/<service>          # list revisions
-k rollout undo deploy/<service> --to-revision=<n>
+git log --oneline -- overlays/eks/kustomization.yaml   # find the "deploy: ..." commit
+git revert <sha> && git push                           # Argo CD rolls back to the previous tags
 ```
 
-Then revert the `image:` tag in git, so the next `kubectl apply` doesn't
-reintroduce the bad version.
+The previous images are still in ECR: the newest 20 per service are kept.
 
 ---
 
@@ -74,20 +81,19 @@ reintroduce the bad version.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `ImagePullBackOff` | Image or tag not in ECR, or node role lacks ECR read | `aws ecr describe-images --repository-name dev/<service>`; re-run `push-images.sh` |
-| `CrashLoopBackOff`, log says `exec format error` | arm64 image on amd64 nodes | Rebuild with `scripts/push-images.sh` (forces `linux/amd64`) |
-| `CreateContainerConfigError` | Secret missing | `k get secrets`; create it from `k8s/<name>/secret.yaml.example`, then apply |
-| PVC `Pending`, Mongo or RabbitMQ pod `Pending` | EBS CSI driver add-on missing, or its IAM role missing | `k describe pvc <name>`; install the add-on ([EKS-DEPLOYMENT step 3](EKS-DEPLOYMENT.md#3-install-the-ebs-csi-driver)) |
+| `ImagePullBackOff` | Tag not in ECR (the CI `images` job failed or was skipped), or the tag points to another account's registry | `aws ecr describe-images --repository-name dev/<service>`; check the CI run for that commit |
+| `CrashLoopBackOff`, log says `exec format error` | arm64 image on amd64 nodes, e.g. built on a Mac and pushed by hand | Let CI build it: it always builds `linux/amd64` |
+| `CreateContainerConfigError` | Secret missing | `k get secrets`; create it from `shoplite-gitops/base/<name>/secret.yaml.example`, then `kubectl apply -f` it |
+| PVC `Pending`, Mongo or RabbitMQ pod `Pending` | EBS CSI driver add-on missing, or its IAM role missing | `k describe pvc <name>`; `terraform apply` in shoplite-infra installs the add-on and its role |
 | App pods `Pending`, `Too many pods` | Node pod limit reached (t3.small allows 11) | Use t3.medium or larger, or add nodes |
 | user- or product-service restarts once at cold start | MongoDB not ready yet; the service exits 1 by design | None, if it stabilises. If it keeps restarting, check Mongo |
 | Service logs `Authentication failed` against Mongo | Password in `secret.yaml` changed after the volume was first created | Mongo keeps its original password. Change it with [Rotate MongoDB password](#rotate-the-mongodb-password), or delete the PVC (**deletes data**) |
 | Ingress has no `ADDRESS` | AWS Load Balancer Controller missing or failing | `kubectl -n kube-system logs deploy/aws-load-balancer-controller` |
-| Every `/api` call returns 502 or 503 from the ALB | api-gateway targets unhealthy | EC2 → Target groups → health. The gateway health check must be `/health` (annotation on `k8s/api-gateway/service.yaml`) |
-| `/api/orders` returns 503, everything else works | order-service not deployed or down | Expected until order-service manifests exist |
+| Every `/api` call returns 502 or 503 from the ALB | api-gateway targets unhealthy | EC2 → Target groups → health. The gateway health check must be `/health` (patch in `shoplite-gitops/overlays/eks/kustomization.yaml`) |
+| `/api/orders` returns 503, everything else works | order-service down or not ready | `k get pods -l app=order-service`; `k logs deploy/order-service`. Its readiness depends on mongodb-orders |
 | Login works, then every call returns 401 | `JWT_SECRET` changed (tokens invalidated) | Users must log in again. Expected after a secret rotation |
 | Admin panel says "doesn't have admin access" | User not promoted, or old token | [Promote](#promote-a-user-to-admin), then log out and back in |
-| Emails not arriving | SMTP misconfigured, or messages in the DLQ | `k logs deploy/notification-service`; [inspect the DLQ](#inspect-and-replay-the-dead-letter-queue) |
-| Order placed but no email | RabbitMQ was down when the order was published (no outbox) | Check order-service logs for `Failed to publish`. Known limitation |
+| order-service logs `Failed to publish` | RabbitMQ unreachable | Orders still work (RabbitMQ is a soft dependency); check `k get pods -l app=rabbitmq` |
 
 Useful commands:
 
@@ -118,8 +124,8 @@ The user must log out and back in to get a token with the admin role.
 This logs out **every** user, because all existing tokens become invalid.
 
 ```bash
-# set a new JWT_SECRET in k8s/user-service/secret.yaml (openssl rand -hex 32)
-kubectl apply -f k8s/user-service/secret.yaml
+# set a new JWT_SECRET in ../shoplite-gitops/base/user-service/secret.yaml (openssl rand -hex 32)
+kubectl apply -f ../shoplite-gitops/base/user-service/secret.yaml
 k rollout restart deploy/user-service
 ```
 
@@ -131,8 +137,8 @@ the Secret alone does nothing. Change it inside MongoDB first:
 ```bash
 k exec -it mongodb-users-0 -- mongosh -u root -p '<old>' --authenticationDatabase admin \
   --eval "db.getSiblingDB('admin').changeUserPassword('root', '<new>')"
-# update MONGO_INITDB_ROOT_PASSWORD in k8s/mongodb-users/secret.yaml
-kubectl apply -f k8s/mongodb-users/secret.yaml
+# update MONGO_INITDB_ROOT_PASSWORD in ../shoplite-gitops/base/mongodb-users/secret.yaml
+kubectl apply -f ../shoplite-gitops/base/mongodb-users/secret.yaml
 k rollout restart deploy/user-service          # picks up the new MONGO_URI
 ```
 
@@ -155,21 +161,6 @@ k exec -i mongodb-users-0 -- sh -c 'mongorestore -u "$MONGO_INITDB_ROOT_USERNAME
   < users-YYYY-MM-DD.archive.gz
 ```
 
-### Inspect and replay the dead-letter queue
-
-Failed notifications land in `notification_service_queue.dlq`. Each message
-carries headers `x-retries`, `x-routing-key` and `x-last-error`.
-
-```bash
-k port-forward svc/rabbitmq 15672    # http://localhost:15672, credentials in rabbitmq-secret
-```
-
-- **Inspect:** Queues → `notification_service_queue.dlq` → Get messages.
-- **Replay** after fixing the cause: enable the shovel plugin once with
-  `k exec rabbitmq-0 -- rabbitmq-plugins enable rabbitmq_shovel rabbitmq_shovel_management`.
-  Then on the DLQ page, use **Move messages** to `notification_service_queue`.
-  Replayed messages get one more attempt before returning to the DLQ.
-
 ### Scale
 
 ```bash
@@ -177,8 +168,7 @@ k scale deploy/api-gateway --replicas=4
 ```
 
 - **Scalable:** api-gateway, user-service, product-service, order-service,
-  notification-service (competing consumers), storefront, admin. All are
-  stateless.
+  storefront, admin. All are stateless.
 - **Not scalable by changing replicas:** MongoDB and RabbitMQ. They run as
   single-node StatefulSets; scaling them needs replica-set or cluster
   configuration.

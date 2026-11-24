@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: product-service-config
-  namespace: ecommerce
-data:
-  GRPC_PORT: "50052"

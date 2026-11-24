@@ -16,7 +16,6 @@ flowchart TB
             user[user-service<br/>gRPC :50051]
             product[product-service<br/>gRPC :50052]
             order[order-service<br/>gRPC :50053]
-            notify[notification-service]
 
             mq[(RabbitMQ)]
             mu[(mongodb-users)]
@@ -24,7 +23,6 @@ flowchart TB
             mo[(mongodb-orders)]
         end
     end
-    smtp([SMTP provider])
 
     browser -->|abc.com| alb
     alb -->|/api/*| gateway
@@ -41,8 +39,6 @@ flowchart TB
     order --> mo
 
     order -->|publish order.*| mq
-    mq -->|consume| notify
-    notify --> smtp
 ```
 
 ## Request flow
@@ -66,7 +62,6 @@ flowchart TB
 | user-service | Users, password hashes (bcrypt), roles, JWT signing | `users` | — |
 | product-service | Products, stock levels | `products` | — |
 | order-service | Orders, order status | `orders` | product-service (gRPC), RabbitMQ (publish) |
-| notification-service | — (stateless) | — | RabbitMQ (consume), SMTP |
 | api-gateway | — (stateless) | — | user, product and order services (gRPC) |
 
 ## Placing an order (consistency model)
@@ -81,7 +76,6 @@ sequenceDiagram
     participant O as order-service
     participant P as product-service
     participant Q as RabbitMQ
-    participant N as notification-service
 
     B->>G: POST /api/orders {productId, quantity}
     G->>O: CreateOrder (prices from client are ignored)
@@ -95,8 +89,6 @@ sequenceDiagram
     O->>Q: publish order.created (best effort)
     O-->>G: orderId, total
     G-->>B: 201 Created
-    Q->>N: order.created
-    N->>N: send confirmation email
 ```
 
 Order status moves only along these paths (`UpdateOrderStatus`, admin only):
@@ -114,16 +106,15 @@ pending ──► confirmed ──► shipped ──► delivered
 | Exchange | `order_events` (topic, durable) |
 | Routing keys | `order.created`, `order.cancelled`, `order.shipped` |
 | Publisher | order-service (confirm channel, persistent messages) |
-| Consumer | notification-service, queue `notification_service_queue` (durable) |
-| Dead-letter queue | `notification_service_queue.dlq`: messages that failed 3 times, or were invalid JSON |
+| Consumer | **None.** Events are published for future consumers (e.g. analytics) and, with no queue bound, are discarded by the exchange |
 
-Events are used **only for notifications**. Stock and order state are kept
-consistent through synchronous gRPC calls, so a RabbitMQ outage delays emails
-but never corrupts data.
+Stock and order state are kept consistent through synchronous gRPC calls, so
+RabbitMQ is a soft dependency: if it's down, orders still work and only the
+events are lost.
 
 Known limitation: publishing happens after the database write, without a
 transactional outbox. If RabbitMQ is unreachable at that moment, the event is
-logged and dropped, and that customer gets no email.
+logged and dropped. That matters once something consumes the events.
 
 ## Authentication
 

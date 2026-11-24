@@ -1,0 +1,206 @@
+# CI for every pull request; CI + delivery for every push to main.
+#
+#   verify  ─┐
+#   smoke   ─┼─► images (build, Trivy scan, push on main) ─► deploy (main only)
+#
+# deploy doesn't touch the cluster. It commits the new image tags to
+# shoplite-gitops, and Argo CD (installed by shoplite-infra) rolls them out.
+#
+# One-time setup in this repo's Settings → Secrets and variables → Actions:
+#   Variables
+#     AWS_ROLE_ARN   terraform output github_ci_role_arn   (shoplite-infra)
+#     AWS_REGION     e.g. us-east-1
+#     GITOPS_REPO    e.g. raghav2306/shoplite-gitops
+#   Secrets
+#     GITOPS_TOKEN   fine-grained token with Contents: read & write on GITOPS_REPO only
+
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The images and the gitops overlay both use the commit SHA as the tag
+  IMAGE_TAG: ${{ github.sha }}
+  ECR_PREFIX: dev # must match `environment` in shoplite-infra
+
+jobs:
+  # ---------------------------------------------------------------- CI
+  verify:
+    name: verify (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app:
+          - services/api-gateway
+          - services/user-service
+          - services/product-service
+          - services/order-service
+          - frontends/storefront
+          - frontends/admin
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+      - run: npm ci
+      - name: Syntax check
+        if: startsWith(matrix.app, 'services/')
+        run: find src -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Build
+        if: startsWith(matrix.app, 'frontends/')
+        run: npm run build
+      - name: Unit tests
+        run: npm test --if-present
+
+  smoke:
+    name: smoke test (docker compose)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the full stack
+        run: docker compose up -d --build --wait --wait-timeout 300
+      - name: Smoke test
+        run: scripts/smoke-test.sh http://localhost:8080 http://localhost:8081/admin/
+      - name: Logs on failure
+        if: failure()
+        run: docker compose ps && docker compose logs --tail=100
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v
+
+  # ---------------------------------------------------------------- images
+  images:
+    name: image (${{ matrix.name }})
+    needs: [verify, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC token for AWS, no stored keys
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Backend services build from the repo root: they copy proto/
+          - { name: api-gateway, context: ., dockerfile: services/api-gateway/Dockerfile }
+          - { name: user-service, context: ., dockerfile: services/user-service/Dockerfile }
+          - { name: product-service, context: ., dockerfile: services/product-service/Dockerfile }
+          - { name: order-service, context: ., dockerfile: services/order-service/Dockerfile }
+          - { name: storefront, context: frontends/storefront, dockerfile: frontends/storefront/Dockerfile }
+          - { name: admin, context: frontends/admin, dockerfile: frontends/admin/Dockerfile }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (linux/amd64, the EKS node architecture)
+        run: >
+          docker build --platform linux/amd64
+          -f ${{ matrix.dockerfile }}
+          -t ${{ matrix.name }}:${{ env.IMAGE_TAG }}
+          ${{ matrix.context }}
+
+      # Fails on CRITICAL vulnerabilities that have a fix available
+      - name: Trivy scan
+        run: >
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
+          aquasec/trivy:0.65.0 image
+          --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress
+          ${{ matrix.name }}:${{ env.IMAGE_TAG }}
+
+      - name: AWS credentials (OIDC)
+        if: github.event_name != 'pull_request'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to ECR
+        if: github.event_name != 'pull_request'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ECR tags are immutable (shoplite-infra), so each SHA is pushed once
+      - name: Push
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_PREFIX }}/${{ matrix.name }}:${{ env.IMAGE_TAG }}
+        run: |
+          docker tag "${{ matrix.name }}:$IMAGE_TAG" "$IMAGE"
+          docker push "$IMAGE"
+
+  # ---------------------------------------------------------------- CD
+  deploy:
+    name: deploy (bump tags in gitops)
+    needs: images
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # One deploy at a time, in commit order; never cancel one halfway
+    concurrency:
+      group: gitops-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: ECR registry
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Check out shoplite-gitops
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.GITOPS_REPO }}
+          token: ${{ secrets.GITOPS_TOKEN }}
+          path: gitops
+
+      - name: Install kustomize
+        run: |
+          curl -sSfL https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.7.1/kustomize_v5.7.1_linux_amd64.tar.gz |
+            tar -xz -C /usr/local/bin kustomize
+
+      - name: Set the new image tags in overlays/eks
+        working-directory: gitops/overlays/eks
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          for name in api-gateway user-service product-service order-service storefront admin; do
+            kustomize edit set image "shoplite/$name=$REGISTRY/$ECR_PREFIX/$name:$IMAGE_TAG"
+          done
+          kustomize build . >/dev/null   # fail here, not in Argo CD, if the overlay is broken
+          git diff --stat
+
+      - name: Commit and push
+        working-directory: gitops
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add overlays/eks/kustomization.yaml
+          if git diff --cached --quiet; then
+            echo "Tags already up to date"; exit 0
+          fi
+          git commit -m "deploy: ${GITHUB_REPOSITORY#*/}@${IMAGE_TAG::7} to eks" \
+                     -m "Source: ${{ github.server_url }}/${{ github.repository }}/commit/$IMAGE_TAG"
+          # Someone else may have pushed meanwhile: rebase and retry
+          for attempt in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep $((attempt * 5))
+          done
+          exit 1

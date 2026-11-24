@@ -1,9 +1,9 @@
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 WORKDIR /app
 COPY services/api-gateway/package*.json ./
 RUN npm ci --omit=dev
 
-FROM node:20-alpine AS runtime
+FROM node:22-alpine AS runtime
 WORKDIR /app/services/api-gateway
 COPY --from=deps /app/node_modules ./node_modules
 COPY services/api-gateway/src ./src

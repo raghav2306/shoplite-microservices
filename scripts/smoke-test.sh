@@ -17,7 +17,6 @@ PASSWORD="Smoke-$(date +%s)-pw"
 failures=0
 pass() { printf '  \033[32mPASS\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; failures=$((failures + 1)); }
-warn() { printf '  \033[33mWARN\033[0m %s\n' "$1"; }
 
 # request <method> <url> [json-body] [token] -> sets $status and $body
 request() {
@@ -60,12 +59,7 @@ request POST "$BASE/api/products" '{"name":"x","price":1,"stock":1}' "$TOKEN"
 expect "non-admin cannot create product" 403
 
 echo "Orders"
-request GET "$BASE/api/orders" "" "$TOKEN"
-case "$status" in
-  200) pass "list orders (200)" ;;
-  503) warn "orders API unavailable (503); expected if order-service is not deployed" ;;
-  *)   fail "list orders: expected 200, got $status $snippet" ;;
-esac
+request GET "$BASE/api/orders" "" "$TOKEN"; expect "list orders" 200
 
 rm -f /tmp/smoke-body.$$
 echo

@@ -15,8 +15,8 @@ runtime: `dotenv` is only for local runs outside Docker.
   start is expected.
 - **RabbitMQ clients** reconnect on their own, with exponential backoff
   capped at 30 s.
-- **Base image** is `node:20-alpine`. Node 20 is end-of-life; see
-  [HANDOVER.md](HANDOVER.md#risks).
+- **Base image** is `node:22-alpine` (LTS) for the services, `nginx:stable-alpine`
+  for the frontends.
 
 ---
 
@@ -78,14 +78,12 @@ Handles the product catalogue and atomic stock reservation.
 
 ## order-service
 
-> **No Kubernetes manifests yet.** See [HANDOVER.md](HANDOVER.md#outstanding-work).
-
 Handles orders and order status, and publishes order events.
 
 | | |
 |---|---|
 | Port | `50053` gRPC |
-| Health | `grpc.health.v1`. Readiness covers MongoDB only. RabbitMQ is a soft dependency: if it's down, emails are lost but orders still work. |
+| Health | `grpc.health.v1`. Readiness covers MongoDB only. RabbitMQ is a soft dependency: if it's down, order events are lost but orders still work. |
 | Depends on | mongodb-orders (hard), product-service (needed to place and cancel orders), RabbitMQ (soft) |
 | Image | `dev/order-service`, build context: repo root |
 
@@ -95,32 +93,6 @@ Handles orders and order status, and publishes order events.
 | `MONGO_URI` | yes | `mongodb://localhost:27017/orders` | |
 | `PRODUCT_SERVICE_URL` | yes | `localhost:50052` | |
 | `RABBITMQ_URL` | yes | `amqp://localhost` | `amqp://user:pass@rabbitmq:5672` |
-
-## notification-service
-
-> **No Kubernetes manifests yet.** See [HANDOVER.md](HANDOVER.md#outstanding-work).
-
-Consumes order events and sends emails. It is stateless. Running several
-replicas is safe: they share the queue as competing consumers.
-
-| | |
-|---|---|
-| Port | `8080` HTTP (health only) |
-| Liveness | `GET /healthz` → 200 |
-| Readiness | `GET /readyz` → 200 while consuming from RabbitMQ, otherwise 503 |
-| Depends on | RabbitMQ (hard), SMTP server |
-| Retry policy | 3 attempts, then the message goes to `notification_service_queue.dlq`. Invalid JSON goes to the DLQ immediately. |
-| Image | `dev/notification-service`, build context: repo root |
-
-| Variable | Required | Default | Notes |
-|---|---|---|---|
-| `RABBITMQ_URL` | yes | `amqp://localhost` | |
-| `SMTP_HOST` | yes | `smtp.mailtrap.io` | e.g. Amazon SES SMTP endpoint |
-| `SMTP_PORT` | no | `587` | |
-| `SMTP_USER` | secret | — | Leave unset for SMTP servers without auth (Mailpit) |
-| `SMTP_PASS` | secret | — | |
-| `FROM_EMAIL` | yes | `noreply@ecommerce.com` | Must be a verified sender with your provider |
-| `HEALTH_PORT` | no | `8080` | |
 
 ## storefront
 
@@ -175,23 +147,21 @@ Configuration: same as storefront.
 
 | Image | Dockerfile | Context |
 |---|---|---|
-| api-gateway, user-service, product-service, order-service, notification-service | `services/<name>/Dockerfile` | **repo root** (copies `proto/`) |
+| api-gateway, user-service, product-service, order-service | `services/<name>/Dockerfile` | **repo root** (copies `proto/`) |
 | storefront, admin | `frontends/<name>/Dockerfile` | `frontends/<name>` |
 
-- **EKS nodes are amd64; developer Macs are arm64.** Build with
-  `--platform linux/amd64`. `scripts/push-images.sh` does this.
-- **order-service and notification-service Dockerfiles still pin
-  `--platform=linux/arm64`.** Remove those flags before building them for EKS.
-- **Image tags are not immutable.** Tag every release (`v2`, a git SHA, …),
-  because the manifests use `imagePullPolicy: IfNotPresent`.
+- **EKS nodes are amd64; developer Macs are arm64.** CI builds with
+  `--platform linux/amd64` and is the only thing that pushes to ECR.
+- **Tags are the git commit SHA**, and ECR tags are immutable: a tag always
+  means the same image. The manifests use `imagePullPolicy: IfNotPresent`.
 
-## Resource baseline (from k8s manifests)
+## Resource baseline (from shoplite-gitops)
 
 | Workload | Replicas | CPU request | Memory request / limit |
 |---|---|---|---|
-| api-gateway, user-service, product-service | 2 each | 50m | 96Mi / 256Mi |
+| api-gateway, user-service, product-service, order-service | 2 each | 50m | 96Mi / 256Mi |
 | storefront, admin | 2 each | 10m | 16Mi / 64Mi |
-| MongoDB (each) | 1 | 100m | 256Mi / 1Gi |
+| MongoDB (×3, each) | 1 | 100m | 256Mi / 1Gi |
 | RabbitMQ | 1 | 100m | 256Mi / 1Gi |
 
 These are starting values, not measured under load. Tune them after

@@ -14,13 +14,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # Local SMTP sink for notification-service; view sent mail at http://localhost:8025
-  mailpit:
-    image: axllent/mailpit:latest
-    ports:
-      - "8025:8025"
-    restart: unless-stopped
-
   mongo-users:
     image: mongo:6.0
     volumes:
@@ -97,23 +90,6 @@ services:
         condition: service_healthy
       product-service:
         condition: service_healthy
-    restart: unless-stopped
-
-  notification-service:
-    build:
-      context: .
-      dockerfile: services/notification-service/Dockerfile
-    environment:
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
-      SMTP_HOST: mailpit
-      SMTP_PORT: 1025
-      FROM_EMAIL: noreply@ecommerce.com
-      HEALTH_PORT: 8080
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      mailpit:
-        condition: service_started
     restart: unless-stopped
 
   api-gateway:
